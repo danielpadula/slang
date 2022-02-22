@@ -1,12 +1,10 @@
 # This is a Coding Challenge for Slang!
 import itertools
-import pprint
 import requests
 import logging
 import sys
 from datetime import datetime, timedelta
 
-pp = pprint.PrettyPrinter(indent=4)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -26,7 +24,8 @@ class Challenge:
     results: list
     SESSION_MINUTES = 5
     ACCESS_KEY = "MjY6SHdDdlFqYnEzZHRIT0hxcHdXaFVCRVFKNmk3U1kyMjNKYUZ0akRBMHpwND0="
-    BASE_URL = "https://api.slangapp.com/challenges/v1/activities"
+    ACTIVITIES_BASE_URL = "https://api.slangapp.com/challenges/v1/activities"
+    SESSIONS_BASE_URL = " https://api.slangapp.com/challenges/v1/activities/sessions"
     ERROR_MESSAGES = {
         400: "There was a problem calling the server. (Error 400)",
         401: "You have not permissions to access the server. (Error 401)",
@@ -35,7 +34,7 @@ class Challenge:
 
     def __init__(self):
         self.activities = []
-        self.results = []
+        self.results = {}
 
     def fetch_activities(self):
         """
@@ -45,7 +44,7 @@ class Challenge:
         """
         logging.info('Fetching activities')
 
-        r = requests.get(self.BASE_URL, headers={'Authorization': f"Basic {self.ACCESS_KEY}"})
+        r = requests.get(self.ACTIVITIES_BASE_URL, headers={'Authorization': f"Basic {self.ACCESS_KEY}"})
 
         # Check errors in call
         if r.status_code in self.ERROR_MESSAGES.keys():
@@ -65,19 +64,21 @@ class Challenge:
 
         self.activities = response['activities']
 
-    def process_challenges(self):
+    def process_activities(self):
         """
         Process data from server and save it into the class instance
 
         :return: None
         """
 
+        logging.info('Processing activities information')
+
         # Lambda to get user ID key
         key_func = lambda x: x["user_id"]
 
         # Group activities by user
         for key, group in itertools.groupby(self.activities, key_func):
-            user_sessions = dict({key: []})
+            self.results[key] = []
 
             # Order each user activities by first seen date time
             user_activities = sorted(list(group), key=lambda i: i['first_seen_at'])
@@ -88,40 +89,38 @@ class Challenge:
 
             # Create first session
             session = {
-                "started_at": activity_start,
-                "ended_at": activity_end,
-                "activity_ids": {user_activities[0]['id']},
-                "duration_seconds": (activity_end - activity_start) // timedelta(seconds=1)
+                "started_at": user_activities[0]['first_seen_at'],
+                "ended_at": user_activities[0]['answered_at'],
+                "activity_ids": [user_activities[0]['id']],
+                "duration_seconds": float((activity_end - activity_start) // timedelta(seconds=1))
             }
 
             # Check session
             for activity in user_activities:
                 activity_answered_at = datetime.fromisoformat(activity['answered_at'])
                 activity_first_seen_at = datetime.fromisoformat(activity['first_seen_at'])
-                minutes_diff = (activity_answered_at - session["started_at"]) // timedelta(minutes=1)
+                minutes_diff = (activity_answered_at - datetime.fromisoformat(session["started_at"])) // timedelta(minutes=1)
 
                 # Is more than SESSION_MINUTES?
                 if minutes_diff < self.SESSION_MINUTES:
-                    session["activity_ids"].add(activity['id'])
-                    session['ended_at'] = activity_answered_at
-                    session['duration_seconds'] = (activity_answered_at - session["started_at"]) // timedelta(seconds=1)
+                    if activity['id'] not in session["activity_ids"]:
+                        session["activity_ids"].append(activity['id'])
+                    session['ended_at'] = activity['answered_at']
+                    session['duration_seconds'] = float((activity_answered_at - datetime.fromisoformat(session["started_at"])) // timedelta(seconds=1))
                 else:
                     # Add current session and create new one
-                    user_sessions[key].append(session)
+                    self.results[key].append(session)
 
                     session = {
-                        "started_at": activity_first_seen_at,
-                        "ended_at": activity_answered_at,
-                        "activity_ids": {activity['id']},
-                        "duration_seconds": (activity_answered_at - activity_first_seen_at) // timedelta(seconds=1)
+                        "started_at": activity['first_seen_at'],
+                        "ended_at": activity['answered_at'],
+                        "activity_ids": [activity['id']],
+                        "duration_seconds": float((activity_answered_at - activity_first_seen_at) // timedelta(seconds=1))
                     }
 
             # Add last session
             else:
-                user_sessions[key].append(session)
-
-            # Add result
-            self.results.append(user_sessions)
+                self.results[key].append(session)
 
     def send_results(self):
         """
@@ -130,11 +129,27 @@ class Challenge:
         :return: None
         """
 
-        pp.pprint(self.results)
+        logging.info('Sending results')
+
+        r = requests.post(
+            self.SESSIONS_BASE_URL,
+            json={'user_sessions': self.results},
+            headers={'Authorization': f"Basic {self.ACCESS_KEY}"}
+        )
+
+        # Check errors in call
+        if r.status_code in self.ERROR_MESSAGES.keys():
+            logging.error(self.ERROR_MESSAGES[r.status_code])
+            exit()
+        elif r.status_code != 204:
+            logging.error('There was an error calling the server.')
+            exit()
+
+        logging.info("Done!")
 
 
 if __name__ == '__main__':
     challenge = Challenge()
     challenge.fetch_activities()
-    challenge.process_challenges()
+    challenge.process_activities()
     challenge.send_results()
