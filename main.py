@@ -1,8 +1,10 @@
 # This is a Coding Challenge for Slang!
+import itertools
 import pprint
 import requests
 import logging
 import sys
+from datetime import datetime, timedelta
 
 pp = pprint.PrettyPrinter(indent=4)
 logging.basicConfig(
@@ -69,7 +71,57 @@ class Challenge:
 
         :return: None
         """
-        pass
+
+        # Lambda to get user ID key
+        key_func = lambda x: x["user_id"]
+
+        # Group activities by user
+        for key, group in itertools.groupby(self.activities, key_func):
+            user_sessions = dict({key: []})
+
+            # Order each user activities by first seen date time
+            user_activities = sorted(list(group), key=lambda i: i['first_seen_at'])
+
+            # Get first activity timestamp
+            activity_start = datetime.fromisoformat(user_activities[0]['first_seen_at'])
+            activity_end = datetime.fromisoformat(user_activities[0]['answered_at'])
+
+            # Create first session
+            session = {
+                "started_at": activity_start,
+                "ended_at": activity_end,
+                "activity_ids": {user_activities[0]['id']},
+                "duration_seconds": (activity_end - activity_start) // timedelta(seconds=1)
+            }
+
+            # Check session
+            for activity in user_activities:
+                activity_answered_at = datetime.fromisoformat(activity['answered_at'])
+                activity_first_seen_at = datetime.fromisoformat(activity['first_seen_at'])
+                minutes_diff = (activity_answered_at - session["started_at"]) // timedelta(minutes=1)
+
+                # Is more than SESSION_MINUTES?
+                if minutes_diff < self.SESSION_MINUTES:
+                    session["activity_ids"].add(activity['id'])
+                    session['ended_at'] = activity_answered_at
+                    session['duration_seconds'] = (activity_answered_at - session["started_at"]) // timedelta(seconds=1)
+                else:
+                    # Add current session and create new one
+                    user_sessions[key].append(session)
+
+                    session = {
+                        "started_at": activity_first_seen_at,
+                        "ended_at": activity_answered_at,
+                        "activity_ids": {activity['id']},
+                        "duration_seconds": (activity_answered_at - activity_first_seen_at) // timedelta(seconds=1)
+                    }
+
+            # Add last session
+            else:
+                user_sessions[key].append(session)
+
+            # Add result
+            self.results.append(user_sessions)
 
     def send_results(self):
         """
@@ -77,7 +129,8 @@ class Challenge:
 
         :return: None
         """
-        pass
+
+        pp.pprint(self.results)
 
 
 if __name__ == '__main__':
